@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+
+# Docker Data
+postgres_data/
+redpanda_data/
+minio_data/
+prometheus_data/
+grafana_data/
+
+# Data Files
+extractors/batch/data/
+*.csv
+*.log
+
+# Ignore data JSONs but allow config JSONs like Debezium
+*.json
+!infrastructure/debezium/*.json
+
+# dbt
+transform/target/
+transform/dbt_packages/
+transform/logs/
+
+# Secrets
+.env
+
+# Secret Feedback File
+TidaLine_Feedback_Checklist.md
