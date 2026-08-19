@@ -1,0 +1,22 @@
+[project]
+name = "tidaline-lakehouse"
+version = "0.1.0"
+description = "TidaLine Maritime Logistics Data Lakehouse"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas==2.2.2",
+    "boto3==1.34.131",
+    "psycopg2-binary==2.9.9",
+    "beautifulsoup4==4.12.3",
+    "requests==2.32.3",
+    "docker==7.1.0",
+    "dbt-core==1.8.3",
+    "dbt-trino==1.8.1",
+    "trino==0.329.0",
+    "sqlalchemy-trino==0.6.2"
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

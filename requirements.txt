@@ -1,0 +1,22 @@
+# TidaLine Lakehouse — Python Dependencies
+# ========================================
+
+# Data Processing
+pandas==2.2.2
+boto3==1.34.131
+psycopg2-binary==2.9.9
+
+# Scraping
+beautifulsoup4==4.12.3
+requests==2.32.3
+
+# Orchestration (Airflow extra requirements are in docker-compose.yml)
+docker==7.1.0
+
+# dbt
+dbt-core==1.8.3
+dbt-trino==1.8.1
+
+# Trino Client
+trino==0.329.0
+sqlalchemy-trino==0.6.2
