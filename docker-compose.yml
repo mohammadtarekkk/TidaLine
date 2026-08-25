@@ -1,27 +1,31 @@
-version: '3.8'
+
 
 x-spark-common: &spark-common
-  image: bitnami/spark:3.5.0
+  image: apache/spark:3.5.1
+  restart: unless-stopped
   environment:
-    - SPARK_HOME=/opt/bitnami/spark
-    - AWS_ACCESS_KEY_ID=minioadmin
-    - AWS_SECRET_ACCESS_KEY=minioadmin
-    - AWS_REGION=us-east-1
-    - SPARK_JARS_PACKAGES=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.3,org.apache.hadoop:hadoop-aws:3.3.4,software.amazon.awssdk:bundle:2.20.18,software.amazon.awssdk:url-connection-client:2.20.18,org.postgresql:postgresql:42.6.0
+    - SPARK_HOME=/opt/spark
+    - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+    - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    - AWS_REGION=${AWS_REGION}
+    - SPARK_JARS_PACKAGES=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.3,org.apache.hadoop:hadoop-aws:3.3.4,software.amazon.awssdk:bundle:2.20.18,software.amazon.awssdk:url-connection-client:2.20.18,org.postgresql:postgresql:42.6.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0
   volumes:
-    - ./spark-defaults.conf:/opt/bitnami/spark/conf/spark-defaults.conf
+    - ./infrastructure/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+    - ./jobs:/opt/spark/jobs
 
 services:
   # 1. Postgres (OLTP & Iceberg Catalog)
   postgres:
     image: postgres:15
     container_name: postgres
+    restart: unless-stopped
+    mem_limit: 512m
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: maritime_logistics
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     command:
       - "postgres"
       - "-c"
@@ -31,18 +35,20 @@ services:
       - "-c"
       - "max_wal_senders=10"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d maritime_logistics -h localhost"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h localhost"]
       interval: 5s
       timeout: 5s
       retries: 20
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./stream/create_earthquakes.sql:/docker-entrypoint-initdb.d/01-earthquakes.sql:ro
+      - ./infrastructure/postgres/init/create_earthquakes.sql:/docker-entrypoint-initdb.d/01-earthquakes.sql:ro
 
   # 2. Redpanda (Kafka Alternative)
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:v23.2.28
     container_name: redpanda
+    restart: unless-stopped
+    mem_limit: 1g
     command:
       - redpanda
       - start
@@ -53,20 +59,36 @@ services:
       - --node-id 0
       - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9644/v1/status/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
     ports:
       - "19092:19092"
+      - "9644:9644"
     volumes:
       - redpanda_data:/var/lib/redpanda/data
 
   # 3. Debezium
   debezium:
-    image: debezium/connect:2.5
+    image: quay.io/debezium/connect:latest
+    pull_policy: never
     container_name: debezium
+    restart: unless-stopped
+    mem_limit: 1g
     depends_on:
       postgres:
         condition: service_healthy
       redpanda:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     ports:
       - "8083:8083"
     environment:
@@ -82,89 +104,139 @@ services:
   # 4. Stream Extractor
   stream_extractor:
     build:
-      context: ./stream
+      context: ./extractors/stream
     container_name: stream_extractor
+    restart: unless-stopped
+    mem_limit: 256m
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: maritime_logistics
-      DB_USER: postgres
-      DB_PASSWORD: postgres
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
 
   # 5. MinIO (S3 Compatible Storage)
   minio:
-    image: minio/minio
+    image: alpine/minio:latest-release
     container_name: minio
+    restart: unless-stopped
+    mem_limit: 512m
+    user: "0:0"
     ports:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_PROMETHEUS_AUTH_TYPE: "public"
     command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     volumes:
       - minio_data:/data
 
   minio-init:
-    image: minio/mc
+    image: python:3.12-slim
+    container_name: minio-init
+    restart: "no"
+    mem_limit: 256m
     depends_on:
-      - minio
-    entrypoint: >
-      /bin/sh -c "
-      until (/usr/bin/mc config host add myminio http://minio:9000 minioadmin minioadmin); do echo 'Waiting for MinIO...'; sleep 3; done;
-      /usr/bin/mc mb myminio/tidaline-lakehouse;
-      /usr/bin/mc policy set public myminio/tidaline-lakehouse;
-      exit 0;
-      "
+      minio:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ./infrastructure/scripts:/scripts:ro
+    entrypoint: ["sh", "-c", "pip install -q boto3 && python /scripts/init_minio.py"]
 
   # 6. Spark (Iceberg configured)
   spark-master:
     <<: *spark-common
     container_name: spark-master
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      minio:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     ports:
       - "8080:8080"
       - "7077:7077"
-    command: bin/spark-class org.apache.spark.deploy.master.Master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
 
   spark-worker:
     <<: *spark-common
     container_name: spark-worker
+    mem_limit: 1536m
     depends_on:
       - spark-master
     environment:
       - SPARK_WORKER_CORES=2
       - SPARK_WORKER_MEMORY=2g
       - SPARK_MASTER=spark://spark-master:7077
-      - AWS_ACCESS_KEY_ID=minioadmin
-      - AWS_SECRET_ACCESS_KEY=minioadmin
-      - AWS_REGION=us-east-1
-    command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
 
   # 7. Trino (Query Engine)
   trino:
     image: trinodb/trino:latest
+    pull_policy: never
     container_name: trino
+    restart: unless-stopped
+    mem_limit: 1g
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/v1/status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     ports:
       - "8084:8080"
     volumes:
-      - ./trino/etc:/etc/trino
+      - ./infrastructure/trino/etc:/etc/trino
 
   # 8. Superset (BI)
   superset:
-    image: apache/superset:latest
+    build:
+      context: ./infrastructure/superset
     container_name: superset
+    restart: unless-stopped
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8088/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
     ports:
       - "8088:8088"
     environment:
-      SUPERSET_SECRET_KEY: "super-secret-key"
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
     command: >
       /bin/sh -c "
       superset fab create-admin --username admin --firstname Superset --lastname Admin --email admin@superset.com --password admin &&
       superset db upgrade &&
       superset init &&
+      superset set_database_uri -d Trino -u trino://admin@trino:8080/iceberg &&
       gunicorn -w 2 --timeout 120 -b 0.0.0.0:8088 'superset.app:create_app()'
       "
 
@@ -172,6 +244,18 @@ services:
   airflow:
     image: apache/airflow:2.9.1
     container_name: airflow
+    user: root
+    restart: unless-stopped
+    mem_limit: 1g
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
     ports:
       - "8085:8080"
     environment:
@@ -180,12 +264,77 @@ services:
       - _AIRFLOW_WWW_USER_CREATE=True
       - _AIRFLOW_WWW_USER_USERNAME=admin
       - _AIRFLOW_WWW_USER_PASSWORD=admin
+      - _PIP_ADDITIONAL_REQUIREMENTS=beautifulsoup4 pandas boto3 requests docker dbt-trino
+      - S3_ENDPOINT=${S3_ENDPOINT}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET=tidaline-lakehouse
     volumes:
       - ./dags:/opt/airflow/dags
-      - ./batch:/opt/airflow/batch
+      - ./extractors/batch:/opt/airflow/extractors/batch
+      - ./transform:/opt/airflow/transform
+      - ./infrastructure/debezium:/opt/airflow/debezium
+      - /var/run/docker.sock:/var/run/docker.sock
     command: standalone
+
+  # 10. Prometheus (Monitoring)
+  prometheus:
+    image: prom/prometheus:latest
+    pull_policy: never
+    container_name: prometheus
+    restart: unless-stopped
+    mem_limit: 256m
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infrastructure/monitoring/alerts.yml:/etc/prometheus/alerts.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+
+  # 11. Grafana (Dashboards)
+  grafana:
+    image: grafana/grafana:latest
+    pull_policy: never
+    container_name: grafana
+    restart: unless-stopped
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD}
+      - GF_INSTALL_PLUGINS=trino-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning
+
+  # 12. Postgres Exporter (DB Metrics)
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    pull_policy: never
+    container_name: postgres-exporter
+    restart: unless-stopped
+    mem_limit: 128m
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+    ports:
+      - "9187:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:
   redpanda_data:
   minio_data:
+  prometheus_data:
+  grafana_data:
