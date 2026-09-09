@@ -10,4 +10,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY seismic/ ./seismic/
 
-CMD ["python", "seismic/streamer.py"]
+CMD ["python", "-m", "seismic.streamer"]
