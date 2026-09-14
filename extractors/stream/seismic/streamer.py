@@ -8,9 +8,10 @@ import os
 import time
 from datetime import datetime, timezone
 
+import psycopg2
 from websocket import WebSocketApp
 
-from writer import PostgresWriter
+from seismic.writer import PostgresWriter
 
 
 logging.basicConfig(
@@ -51,21 +52,30 @@ class EarthquakeStreamer:
                 LOGGER.warning("Ignoring a message without event properties")
                 return
 
-            coordinates = event.get("geometry", {}).get("coordinates", [0, 0, 0])
+            coordinates = event.get("geometry", {}).get("coordinates", [])
+            unid = properties.get("unid")
+            time_val = parse_time(properties.get("time"))
+            lat = coordinates[1] if len(coordinates) > 1 else None
+            lon = coordinates[0] if coordinates else None
+
+            if not unid or not time_val or lat is None or lon is None:
+                LOGGER.error("Rejecting event missing critical fields: %s", message)
+                return
+
             fields = {
-                "source_id": properties.get("source_id", "N/A"),
-                "source_catalog": properties.get("source_catalog", "N/A"),
+                "source_id": properties.get("source_id"),
+                "source_catalog": properties.get("source_catalog"),
                 "lastupdate": parse_time(properties.get("lastupdate")),
-                "time": parse_time(properties.get("time")),
-                "flynn_region": properties.get("flynn_region", "N/A"),
-                "lat": coordinates[1] if len(coordinates) > 1 else 0,
-                "lon": coordinates[0] if coordinates else 0,
-                "depth": abs(coordinates[2]) if len(coordinates) > 2 else 0,
-                "evtype": properties.get("evtype", "N/A"),
-                "auth": properties.get("auth", "N/A"),
-                "mag": properties.get("mag", 0),
-                "magtype": properties.get("magtype", "N/A"),
-                "unid": properties.get("unid", "N/A"),
+                "time": time_val,
+                "flynn_region": properties.get("flynn_region"),
+                "lat": lat,
+                "lon": lon,
+                "depth": abs(coordinates[2]) if len(coordinates) > 2 else None,
+                "evtype": properties.get("evtype"),
+                "auth": properties.get("auth"),
+                "mag": properties.get("mag"),
+                "magtype": properties.get("magtype"),
+                "unid": unid,
                 "action": data.get("action", "unknown"),
             }
 
@@ -78,6 +88,14 @@ class EarthquakeStreamer:
                 fields["unid"],
                 fields["action"],
             )
+        except psycopg2.DatabaseError as e:
+            LOGGER.error("Database error: %s", e)
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
+            if isinstance(e, (psycopg2.OperationalError, psycopg2.InterfaceError)):
+                raise e  # Bubble up to main() retry loop
         except Exception:
             LOGGER.exception("Failed to process seismic message")
 
