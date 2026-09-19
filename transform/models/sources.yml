@@ -1,0 +1,82 @@
+version: 2
+
+sources:
+  - name: silver
+    description: "Silver-layer Iceberg tables — cleaned and typed data from Bronze CSVs and CDC streams."
+    database: iceberg
+    schema: silver
+    tables:
+      - name: vessels
+        description: >
+          Vessel voyage data scraped daily from VesselFinder.
+          Contains Egyptian-flagged cargo ships and oil tankers with departure/arrival info.
+        columns:
+          - name: name
+            description: "Vessel name"
+            tests:
+              - not_null
+          - name: type
+            description: "Vessel type (e.g., Bulk Carrier, Oil Tanker)"
+          - name: departure_date
+            description: "Timestamp of departure from last port"
+          - name: arrival_date
+            description: "Estimated or actual arrival timestamp"
+          - name: last_port_name
+            description: "Name of the last port visited"
+          - name: destination_port_name
+            description: "Name of the destination port"
+
+      - name: ports
+        description: >
+          NGA World Port Index — 3,800+ global ports with coordinates,
+          harbor characteristics, and available supplies/services.
+        columns:
+          - name: world_port_index_number
+            description: "Unique NGA port identifier"
+            tests:
+              - unique
+              - not_null
+          - name: main_port_name
+            description: "Official port name"
+            tests:
+              - not_null
+          - name: country_code
+            description: "Two-letter country code"
+          - name: latitude
+            description: "Port latitude in decimal degrees"
+            tests:
+              - not_null
+          - name: longitude
+            description: "Port longitude in decimal degrees"
+            tests:
+              - not_null
+
+      - name: earthquakes
+        description: >
+          Real-time seismic events captured via CDC from SeismicPortal WebSocket.
+          Debezium streams inserts/updates/deletes from Postgres into Iceberg
+          via Spark Structured Streaming with MERGE INTO upserts.
+        columns:
+          - name: unid
+            description: "Unique earthquake event ID from SeismicPortal"
+            tests:
+              - unique
+              - not_null
+          - name: time
+            description: "Timestamp of the seismic event"
+          - name: mag
+            description: "Earthquake magnitude"
+            tests:
+              - not_null
+          - name: lat
+            description: "Epicenter latitude"
+            tests:
+              - not_null
+          - name: lon
+            description: "Epicenter longitude"
+            tests:
+              - not_null
+          - name: depth
+            description: "Depth in kilometers"
+          - name: flynn_region
+            description: "Named geographic region of the event"

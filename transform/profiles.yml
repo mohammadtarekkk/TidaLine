@@ -1,0 +1,20 @@
+tidaline:
+  target: dev
+  outputs:
+    dev:
+      type: trino
+      method: none
+      user: "{{ env_var('TRINO_USER', 'admin') }}"
+      host: localhost
+      port: 8084
+      catalog: iceberg
+      schema: gold
+    docker:
+      type: trino
+      method: none
+      user: "{{ env_var('TRINO_USER', 'admin') }}"
+      host: trino
+      port: 8080
+      catalog: iceberg
+      schema: gold
+
