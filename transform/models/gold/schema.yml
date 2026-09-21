@@ -1,0 +1,116 @@
+version: 2
+
+models:
+  - name: dim_ports
+    description: >
+      Port dimension table enriched with supply and communication ratings.
+      Each port is scored based on available provisions, fuel, water, repairs,
+      and communication infrastructure (radio, telephone, airport, telefax).
+    columns:
+      - name: index_no
+        description: "NGA World Port Index number (unique port identifier)"
+        tests:
+          - unique
+          - not_null
+      - name: main_port_name
+        description: "Official port name"
+        tests:
+          - not_null
+      - name: country_code
+        description: "Two-letter country code"
+      - name: latitude
+        description: "Port latitude in decimal degrees"
+        tests:
+          - not_null
+      - name: longitude
+        description: "Port longitude in decimal degrees"
+        tests:
+          - not_null
+      - name: harbor_size
+        description: "Harbor size classification (e.g., Large, Medium, Small, Very Small)"
+      - name: harbor_type
+        description: "Harbor type (e.g., Coastal Natural, River Basin, Open Roadstead)"
+      - name: shelter
+        description: "Shelter afforded quality"
+      - name: supplies_rate
+        description: "Aggregate supply rating based on provisions, fuel, diesel, water, and repairs"
+        tests:
+          - accepted_values:
+              values: ["Excellent", "Good", "Limited", "Unavailable"]
+      - name: comm_rate
+        description: "Aggregate communication rating based on radio, telephone, airport, and telefax"
+        tests:
+          - accepted_values:
+              values: ["Excellent", "Good", "Limited", "Unavailable"]
+
+  - name: fct_vessel_trips
+    description: >
+      Fact table for vessel voyages. Each row represents a single trip
+      with calculated trip duration and reporting delay in hours.
+    columns:
+      - name: vessel_name
+        description: "Name of the vessel"
+        tests:
+          - not_null
+      - name: vessel_type
+        description: "Type of vessel (e.g., Bulk Carrier, Oil/Chemical Tanker)"
+      - name: year_built
+        description: "Year the vessel was built"
+      - name: gross_tonnage
+        description: "Gross tonnage of the vessel"
+      - name: deadweight
+        description: "Deadweight tonnage (cargo capacity)"
+      - name: length_m
+        description: "Vessel length in meters"
+      - name: beam_m
+        description: "Vessel beam (width) in meters"
+      - name: departure_date
+        description: "Departure timestamp from last port"
+      - name: last_port_name
+        description: "Name of the departure port"
+      - name: arrival_date
+        description: "Arrival timestamp at destination port"
+      - name: destination_port_name
+        description: "Name of the destination port"
+      - name: reported_status
+        description: "Navigation status (e.g., Underway, At Anchor, Moored)"
+      - name: trip_duration_hours
+        description: "Calculated trip duration in hours (arrival - departure)"
+      - name: reporting_delay_hours
+        description: "Hours between arrival and status report submission"
+
+  - name: fct_earthquake_port_risks
+    description: >
+      Spatial join between real-time earthquake events and global ports.
+      Pairs every earthquake with ports within 200km and classifies
+      risk as Dangerous, Cautionary, or Safe based on magnitude and distance.
+    columns:
+      - name: earthquake_id
+        description: "Unique earthquake event ID (unid from SeismicPortal)"
+        tests:
+          - not_null
+      - name: earthquake_time
+        description: "Timestamp of the seismic event"
+      - name: earthquake_magnitude
+        description: "Earthquake magnitude (Richter scale)"
+      - name: earthquake_lat
+        description: "Epicenter latitude"
+      - name: earthquake_lon
+        description: "Epicenter longitude"
+      - name: flynn_region
+        description: "Named geographic region of the earthquake"
+      - name: port_id
+        description: "NGA port index number"
+        tests:
+          - not_null
+      - name: port_name
+        description: "Name of the potentially affected port"
+      - name: distance_km
+        description: "Great-circle distance in km between earthquake and port"
+      - name: risk_classification
+        description: >
+          Risk level: Dangerous (mag≥5.0 within 50km),
+          Cautionary (mag≥4.0 within 100km), or Safe
+        tests:
+          - accepted_values:
+              values: ["Dangerous", "Cautionary", "Safe"]
