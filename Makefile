@@ -65,14 +65,6 @@ spark-batch:
 		--driver-memory 512m \
 		/opt/spark/jobs/batch/bronze_to_silver.py
 
-spark-stream:
-	@echo "Starting Seismic CDC → Iceberg streaming job..."
-	docker exec -d spark-master /opt/spark/bin/spark-submit \
-		--master local[2] \
-		--driver-memory 512m \
-		/opt/spark/jobs/streaming/seismic_cdc_to_iceberg.py
-	@echo "✅ Streaming job started in background."
-
 dbt:
 	@echo "Running dbt transformations..."
 	. venv/bin/activate && cd transform && dbt run --profiles-dir .
@@ -86,6 +78,11 @@ dbt-docs:
 	. venv/bin/activate && cd transform && dbt docs generate --profiles-dir .
 	@echo "Run '. venv/bin/activate && cd transform && dbt docs serve' locally to view the docs."
 
-pipeline: debezium spark-batch dbt
-	@echo ""
-	@echo "✅ Full pipeline complete: Debezium → Spark (Bronze→Silver) → dbt (Silver→Gold)"
+pipeline:
+	@echo "Triggering Airflow Pipeline (lakehouse_pipeline)..."
+	@curl -sf -X POST "http://localhost:8085/api/v1/dags/lakehouse_pipeline/dagRuns" \
+		-H "Content-Type: application/json" \
+		-u "admin:admin" \
+		-d '{}' \
+		&& echo "\n✅ Pipeline triggered successfully! View progress at http://localhost:8085" \
+		|| echo "\n⚠️  Failed to trigger pipeline. Is Airflow ready?"

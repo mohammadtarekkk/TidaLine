@@ -193,6 +193,18 @@ services:
       - AWS_REGION=${AWS_REGION}
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
 
+  spark-streaming:
+    <<: *spark-common
+    container_name: spark-streaming
+    restart: always
+    mem_limit: 1g
+    depends_on:
+      - spark-master
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    command: /opt/spark/bin/spark-submit --master spark://spark-master:7077 --driver-memory 512m /opt/spark/jobs/streaming/seismic_cdc_to_iceberg.py
+
   # 7. Trino (Query Engine)
   trino:
     image: trinodb/trino:latest
@@ -242,11 +254,11 @@ services:
 
   # 9. Airflow (Standalone for orchestration)
   airflow:
-    image: apache/airflow:2.9.1
+    build:
+      context: .
+      dockerfile: infrastructure/airflow/Dockerfile
     container_name: airflow
-    user: root
     restart: unless-stopped
-    mem_limit: 1g
     depends_on:
       postgres:
         condition: service_healthy
@@ -259,23 +271,30 @@ services:
     ports:
       - "8085:8080"
     environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@postgres:5432/postgres
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - _AIRFLOW_DB_UPGRADE=True
       - _AIRFLOW_WWW_USER_CREATE=True
+      - AIRFLOW__CORE__PARALLELISM=2
+      - AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG=2
+      - AIRFLOW__WEBSERVER__WORKERS=2
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
       - _AIRFLOW_WWW_USER_USERNAME=admin
       - _AIRFLOW_WWW_USER_PASSWORD=admin
-      - _PIP_ADDITIONAL_REQUIREMENTS=beautifulsoup4 pandas boto3 requests docker dbt-trino
       - S3_ENDPOINT=${S3_ENDPOINT}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - S3_BUCKET=tidaline-lakehouse
+      - SPARK_HOME=/opt/spark
     volumes:
       - ./dags:/opt/airflow/dags
       - ./extractors/batch:/opt/airflow/extractors/batch
       - ./transform:/opt/airflow/transform
       - ./infrastructure/debezium:/opt/airflow/debezium
-      - /var/run/docker.sock:/var/run/docker.sock
-    command: standalone
+      - ./jobs:/opt/spark/jobs
+      - ./infrastructure/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+    command: bash -c "airflow db migrate && airflow users create -r Admin -u admin -p admin -e admin@example.com -f admin -l admin || true && airflow webserver & airflow scheduler"
 
   # 10. Prometheus (Monitoring)
   prometheus:
