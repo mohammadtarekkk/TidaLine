@@ -22,14 +22,14 @@
 up:
 	docker compose up -d
 	@echo ""
-	@echo "✅ Stack is starting. Services may take 30-60s to fully initialize."
+	@echo "✅ Stack startup initiated. Run 'docker compose ps' to check health status."
 	@echo ""
-	@echo "  Airflow:    http://localhost:8085  (admin/admin)"
+	@echo "  Airflow:    http://localhost:8085"
 	@echo "  Spark:      http://localhost:8080"
 	@echo "  Trino:      http://localhost:8084"
-	@echo "  Superset:   http://localhost:8088  (admin/admin)"
-	@echo "  Grafana:    http://localhost:3000   (admin/admin)"
-	@echo "  MinIO:      http://localhost:9001   (minioadmin/minioadmin)"
+	@echo "  Superset:   http://localhost:8088"
+	@echo "  Grafana:    http://localhost:3000"
+	@echo "  MinIO:      http://localhost:9001"
 	@echo "  Redpanda:   http://localhost:9644"
 	@echo "  Prometheus: http://localhost:9090"
 
@@ -79,10 +79,12 @@ dbt-docs:
 	@echo "Run '. venv/bin/activate && cd transform && dbt docs serve' locally to view the docs."
 
 pipeline:
-	@echo "Triggering Airflow Pipeline (lakehouse_pipeline)..."
-	@curl -sf -X POST "http://localhost:8085/api/v1/dags/lakehouse_pipeline/dagRuns" \
-		-H "Content-Type: application/json" \
-		-u "admin:admin" \
-		-d '{}' \
+	@echo "Checking if Airflow is ready to accept commands..."
+	@until curl -sf http://localhost:8085/health > /dev/null; do \
+		echo "⏳ Airflow webserver is still booting (this can take 3-4 minutes on first run). Waiting 10s..."; \
+		sleep 10; \
+	done
+	@echo "\n✅ Airflow is ready! Triggering Pipeline (lakehouse_pipeline)..."
+	@docker exec airflow airflow dags trigger lakehouse_pipeline > /dev/null 2>&1 \
 		&& echo "\n✅ Pipeline triggered successfully! View progress at http://localhost:8085" \
-		|| echo "\n⚠️  Failed to trigger pipeline. Is Airflow ready?"
+		|| echo "\n⚠️  Failed to trigger pipeline."

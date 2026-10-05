@@ -88,7 +88,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 30s
+      start_period: 300s
     ports:
       - "8083:8083"
     environment:
@@ -267,7 +267,7 @@ services:
       interval: 15s
       timeout: 5s
       retries: 10
-      start_period: 60s
+      start_period: 300s
     ports:
       - "8085:8080"
     environment:
@@ -279,6 +279,8 @@ services:
       - AIRFLOW__CORE__PARALLELISM=2
       - AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG=2
       - AIRFLOW__WEBSERVER__WORKERS=2
+      - AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT=300
+      - AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT=300
       - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
       - _AIRFLOW_WWW_USER_USERNAME=admin
       - _AIRFLOW_WWW_USER_PASSWORD=admin

@@ -1,3 +1,4 @@
+import airflow.utils.dates
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
@@ -52,7 +53,7 @@ with DAG(
     default_args=default_args,
     description='Scrape vessels data and upload to MinIO',
     schedule_interval='@daily',
-    start_date=datetime(2024, 1, 1),
+    start_date=airflow.utils.dates.days_ago(1),
     catchup=False,
     tags=['batch', 'vessels', 'bronze'],
 ) as vessels_dag:
@@ -76,7 +77,7 @@ with DAG(
     default_args=default_args,
     description='Download ports data and upload to MinIO',
     schedule_interval='@monthly',
-    start_date=datetime(2024, 1, 1),
+    start_date=airflow.utils.dates.days_ago(1),
     catchup=False,
     tags=['batch', 'ports', 'bronze'],
 ) as ports_dag:

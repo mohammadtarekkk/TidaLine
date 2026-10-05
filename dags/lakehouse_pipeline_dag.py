@@ -1,3 +1,4 @@
+import airflow.utils.dates
 """
 TidaLine Lakehouse Pipeline — Master Orchestration DAG
 
@@ -70,44 +71,7 @@ def register_debezium_connector(**kwargs):
         )
 
 
-def run_spark_bronze_to_silver(**kwargs):
-    """Execute the Bronze → Silver Spark batch job inside the spark-master container."""
-    import docker
-
-    client = docker.from_env()
-
-    try:
-        container = client.containers.get("spark-master")
-    except docker.errors.NotFound:
-        raise Exception(
-            "spark-master container not found. Is it running? "
-            "Run: docker compose start spark-master"
-        )
-
-    cmd = (
-        "/opt/spark/bin/spark-submit "
-        "--master local[2] "
-        "--driver-memory 512m "
-        "/opt/spark/jobs/batch/bronze_to_silver.py"
-    )
-
-    logger.info("Submitting Spark batch job to spark-master container...")
-
-    exec_id = client.api.exec_create(container.id, cmd)
-    output = client.api.exec_start(exec_id["Id"], stream=True)
-
-    for chunk in output:
-        for line in chunk.decode("utf-8", errors="replace").splitlines():
-            logger.info("[spark] %s", line)
-
-    result = client.api.exec_inspect(exec_id["Id"])
-    exit_code = result["ExitCode"]
-
-    if exit_code != 0:
-        raise Exception(f"Spark batch job failed with exit code {exit_code}")
-
-    logger.info("Spark Bronze → Silver completed successfully.")
-
+from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 
 # ---------------------------------------------------------------------------
 # DAG definition
@@ -126,7 +90,7 @@ with DAG(
     default_args=default_args,
     description="Master pipeline: Bronze → Silver (Spark) → Gold (dbt/Trino)",
     schedule_interval="@daily",
-    start_date=datetime(2024, 1, 1),
+    start_date=airflow.utils.dates.days_ago(1),
     catchup=False,
     tags=["pipeline", "master", "lakehouse"],
 ) as dag:
@@ -136,9 +100,15 @@ with DAG(
         python_callable=register_debezium_connector,
     )
 
-    t2_spark_batch = PythonOperator(
+    t2_spark_batch = SparkSubmitOperator(
         task_id="spark_bronze_to_silver",
-        python_callable=run_spark_bronze_to_silver,
+        application="/opt/spark/jobs/batch/bronze_to_silver.py",
+        conn_id="spark_default",
+        conf={
+            "spark.master": "spark://spark-master:7077",
+            "spark.driver.memory": "512m",
+        },
+        packages="org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.3,org.apache.hadoop:hadoop-aws:3.3.4,software.amazon.awssdk:bundle:2.20.18,software.amazon.awssdk:url-connection-client:2.20.18,org.postgresql:postgresql:42.6.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0",
         execution_timeout=timedelta(minutes=30),
     )
 
@@ -146,7 +116,7 @@ with DAG(
         task_id="dbt_test_silver_layer",
         bash_command=(
             "cd /opt/airflow/transform && "
-            "dbt test --select source:silver --target docker --profiles-dir ."
+            "/home/airflow/dbt_venv/bin/dbt test --select source:silver --target docker --profiles-dir ."
         ),
         execution_timeout=timedelta(minutes=10),
     )
@@ -155,7 +125,7 @@ with DAG(
         task_id="dbt_gold_transformations",
         bash_command=(
             "cd /opt/airflow/transform && "
-            "dbt run --target docker --profiles-dir ."
+            "/home/airflow/dbt_venv/bin/dbt run --target docker --profiles-dir ."
         ),
         execution_timeout=timedelta(minutes=15),
     )
